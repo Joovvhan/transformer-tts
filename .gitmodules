@@ -1,0 +1,6 @@
+[submodule "waveglow"]
+	path = waveglow
+	url = https://github.com/NVIDIA/waveglow.git
+[submodule "ParallelWaveGAN"]
+	path = ParallelWaveGAN
+	url = https://github.com/kan-bayashi/ParallelWaveGAN.git
