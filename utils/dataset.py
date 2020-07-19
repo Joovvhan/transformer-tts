@@ -239,21 +239,21 @@ if __name__ == '__main__':
     
     print(file_text_pair_list[0], len(file_text_pair_list))
 
-    # for i in range(10):
+    for i in range(10):
 
-    #     path, mel, text = dataset[i]
+        path, mel, text = dataset[i]
 
-    #     print(path, text, configs['dataset_meta_path'])
+        print(path, text, configs['dataset_meta_path'])
 
-    #     mel_spectrogram_path = path.replace(configs['dataset_path'], './mel_spectrograms') + '.pt'
+        mel_spectrogram_path = path.replace(configs['dataset_path'], './mel_spectrograms') + '.pt'
 
-    #     mel_tensor = torch.tensor(mel)
+        mel_tensor = torch.tensor(mel + 6)
         
-    #     try:
-    #         torch.save(mel_tensor, mel_spectrogram_path)
-    #     except FileNotFoundError:
-    #         dir_name = os.path.dirname(mel_spectrogram_path)
-    #         os.makedirs(dir_name, exist_ok=True)
-    #         torch.save(mel_tensor, mel_spectrogram_path)
+        try:
+            torch.save(mel_tensor, mel_spectrogram_path)
+        except FileNotFoundError:
+            dir_name = os.path.dirname(mel_spectrogram_path)
+            os.makedirs(dir_name, exist_ok=True)
+            torch.save(mel_tensor, mel_spectrogram_path)
 
 
