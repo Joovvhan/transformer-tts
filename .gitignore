@@ -1,2 +1,8 @@
 *.pyc
 **/__pycache__
+waveglow/
+ParallelWaveGAN/
+
+.vscode/
+kss-22050/
+mel_spectrograms/
