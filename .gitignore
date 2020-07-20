@@ -1,7 +1,6 @@
 *.pyc
 **/__pycache__
-waveglow/
-ParallelWaveGAN/
+korean-single-speaker-speech-dataset/
 
 .vscode/
 kss-22050/
