@@ -1,5 +1,6 @@
 import sys
 sys.path.append('./waveglow/')
+sys.path.append('./waveglow/tacotron2/')
 
 # *****************************************************************************
 #  Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
