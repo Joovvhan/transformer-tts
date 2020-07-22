@@ -23,7 +23,7 @@ config_dict.update({
 })
 
 config_dict.update({
-    'converted_dataset_path': f"./kss-{config_dict['fs']}", 
+    'converted_dataset_path': f"{config_dict['dataset_path']}-{config_dict['fs']}", 
 })
 
 config_dict.update({
@@ -53,8 +53,13 @@ config_dict.update({
                                      fmin=config_dict['mel_fmin'],
                                      fmax=config_dict['mel_fmax']),
 })
+
 config_dict.update({
     "mel_min_val": np.exp(-12),
+})
+
+config_dict.update({
+    "batch_size": 8,
 })
 
 

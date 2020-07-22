@@ -1,4 +1,7 @@
 from torch.utils.data import Dataset, DataLoader
+# https://pytorch.org/docs/stable/data.html#torch.utils.data.DataLoader
+from torch.nn.utils.rnn import pad_sequence
+
 import torch
 from collections import namedtuple
 import os
@@ -50,7 +53,7 @@ class AudioTextDataset(Dataset):
         
         mel = audio2mel(audio, self.configs)
 
-        return (file_path, mel, text)
+        return (file_path, mel, text) # ./korean-single-speaker-speech-dataset-22050/kss/1/1_0000.wav (80, 305) 그는 괜찮은 척하려고 애쓰는 것 같았다.
 
 def load_file_text_pair_list(meta_file_path, meta_type='kss'):
 
@@ -251,6 +254,25 @@ def split_train_test_set(dataset_meta_path, dataset_meta_path_train, dataset_met
 
     return dataset_meta_path_train, dataset_meta_path_valid
 
+def collate_function(data_list):
+
+    # (file_path, mel, text)
+    path_list = list()
+    mel_list = list()
+    mel_length_list = list()
+    text_list = list()
+
+    for (file_path, mel, text) in data_list:
+        path_list.append(file_path)
+        text_list.append(text)
+        mel_list.append(torch.tensor(mel.T)) # (T, 80)
+        mel_length_list.append(mel.shape[1])
+        
+    mel_batch = pad_sequence(mel_list, batch_first=True) # (B, T, 80)
+    # mel_batch = None
+
+    return path_list, mel_batch, text_list, mel_length_list
+
 if __name__ == '__main__':
     file_text_pair_list = load_file_text_pair_list(configs['dataset_meta_path'])
     check_file_existence(file_text_pair_list)
@@ -271,7 +293,17 @@ if __name__ == '__main__':
     
     train_dataset = AudioTextDataset(configs['dataset_meta_path_train'], configs)
     valid_dataset = AudioTextDataset(configs['dataset_meta_path_valid'], configs)
-    
+
+    train_dataset_loader = torch.utils.data.DataLoader(train_dataset, 
+                                                       batch_size=configs['batch_size'], 
+                                                       shuffle=True, num_workers=4, 
+                                                       collate_fn=collate_function)
+                                                       
+    valid_dataset_loader = torch.utils.data.DataLoader(train_dataset,
+                                                       batch_size=configs['batch_size'], 
+                                                       shuffle=False, num_workers=4, 
+                                                       collate_fn=collate_function)
+
     # print(file_text_pair_list[0], len(file_text_pair_list))
 
     path, mel, text = train_dataset[0]
@@ -280,9 +312,21 @@ if __name__ == '__main__':
     path, mel, text = valid_dataset[0]
     print(path, mel.shape, text)
 
+    for batch in train_dataset_loader:
+        print(batch[0])
+        print(batch[1].shape)
+        print(batch[2])
+        break
+
+    for batch in valid_dataset_loader:
+        print(batch[0])
+        print(batch[1].shape)
+        print(batch[2])
+        break
+
 
     # Saving mel.pt files for Waveglow examples
-
+    '''
     import random
     for i in random.sample(range(len(train_dataset)), 20):
 
@@ -301,6 +345,6 @@ if __name__ == '__main__':
             dir_name = os.path.dirname(mel_spectrogram_path)
             os.makedirs(dir_name, exist_ok=True)
             torch.save(mel_tensor, mel_spectrogram_path)
-
+    '''
 
 
