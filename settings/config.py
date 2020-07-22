@@ -13,7 +13,13 @@ config_dict.update({
 })
 
 config_dict.update({
-    'dataset_meta_path': os.path.join(config_dict['dataset_path'], 'transcript.v.1.3.txt')
+    'dataset_meta_path': os.path.join(config_dict['dataset_path'], 'transcript.v.1.4.txt')
+})
+
+config_dict.update({
+    'dataset_meta_path_train': config_dict['dataset_meta_path'].replace('.txt', '_train.txt'),
+    'dataset_meta_path_valid': config_dict['dataset_meta_path'].replace('.txt', '_valid.txt'),
+    'valid_ratio': 0.002,
 })
 
 config_dict.update({

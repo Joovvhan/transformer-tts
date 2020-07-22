@@ -64,7 +64,12 @@ def main(mel_files, waveglow_path, sigma, output_dir, sampling_rate, is_fp16,
         audio = audio.astype('int16')
         audio_path = os.path.join(
             output_dir, "{}_synthesis.wav".format(file_name))
-        write(audio_path, sampling_rate, audio)
+        try:
+            write(audio_path, sampling_rate, audio)
+        except FileNotFoundError:
+            dir_name = os.path.dirname(audio_path)
+            os.makedirs(dir_name, exist_ok=True)
+            write(audio_path, sampling_rate, audio)
         print(audio_path)
 
 
@@ -75,7 +80,7 @@ if __name__ == "__main__":
     parser.add_argument('-f', "--filelist_path", required=True)
     parser.add_argument('-w', '--waveglow_path',
                         help='Path to waveglow decoder checkpoint with model')
-    parser.add_argument('-o', "--output_dir", required=True)
+    parser.add_argument('-o', "--output_dir", default='./synthesized')
     parser.add_argument("-s", "--sigma", default=1.0, type=float)
     parser.add_argument("--sampling_rate", default=22050, type=int)
     parser.add_argument("--is_fp16", action="store_true")

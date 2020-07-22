@@ -1,7 +1,10 @@
 *.pyc
 **/__pycache__
-korean-single-speaker-speech-dataset/
+/korean-single-speaker-speech-dataset
 
 .vscode/
 kss-22050/
 mel_spectrograms/
+waveglow/
+
+*.wav

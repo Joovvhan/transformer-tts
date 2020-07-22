@@ -208,9 +208,10 @@ def convert_dataset_as_configuration(file_text_pair_list, configs):
 
     return True
 
-def audio2mel(audio, configs):
+def mel_rescale_for_waveglow(mel):
+    return mel + 6
 
-    print()
+def audio2mel(audio, configs):
 
     f, t, Zxx = signal.stft(audio, 
                       fs=configs['sampling_rate'], 
@@ -221,9 +222,34 @@ def audio2mel(audio, configs):
     mel = configs['mel_basis'] @ Sxx
     log_mel = np.log(np.maximum(mel, configs['mel_min_val']))
 
-    print(audio.shape, Zxx.shape, configs['mel_basis'].shape, Sxx.shape, log_mel.shape)
+    log_mel = mel_rescale_for_waveglow(log_mel)
+
+    # print(audio.shape, Zxx.shape, configs['mel_basis'].shape, Sxx.shape, log_mel.shape)
 
     return log_mel
+
+def split_train_test_set(dataset_meta_path, dataset_meta_path_train, dataset_meta_path_valid, valid_ratio):
+
+    train_meta_count = 0
+    valid_meta_count = 0
+
+    import random
+
+    with open(dataset_meta_path, 'r') as meta_file, \
+         open(dataset_meta_path_train, 'w') as meta_train_file, \
+         open(dataset_meta_path_valid, 'w') as meta_valid_file :
+
+        for line in meta_file:
+            if random.random() < valid_ratio:
+                meta_valid_file.write(line)
+                valid_meta_count += 1
+            else:
+                meta_train_file.write(line)
+                train_meta_count += 1
+
+    print(f'* Wrote {train_meta_count} train files in {dataset_meta_path_train}, {valid_meta_count} in {dataset_meta_path_valid}')
+
+    return dataset_meta_path_train, dataset_meta_path_valid
 
 if __name__ == '__main__':
     file_text_pair_list = load_file_text_pair_list(configs['dataset_meta_path'])
@@ -233,21 +259,41 @@ if __name__ == '__main__':
     if not proper_configuration:
         convert_dataset_as_configuration(file_text_pair_list, configs)
         configs['dataset_meta_path'] = configs['converted_meta_path']
+        configs['dataset_meta_path_train'] = configs['dataset_meta_path'].replace('.txt', '_train.txt')
+        configs['dataset_meta_path_valid'] = configs['dataset_meta_path'].replace('.txt', '_valid.txt')
         configs['dataset_path'] = configs['converted_dataset_path']
+
+    if not os.path.isfile(configs['dataset_meta_path_train']) or not os.path.isfile(configs['dataset_meta_path_valid']):
+
+        print(f"No meta file [{configs['dataset_meta_path_train']}] and [{configs['dataset_meta_path_valid']}]")
+
+        split_train_test_set(configs['dataset_meta_path'], configs['dataset_meta_path_train'], configs['dataset_meta_path_valid'], configs['valid_ratio'])
     
-    dataset = AudioTextDataset(configs['dataset_meta_path'], configs)
+    train_dataset = AudioTextDataset(configs['dataset_meta_path_train'], configs)
+    valid_dataset = AudioTextDataset(configs['dataset_meta_path_valid'], configs)
     
-    print(file_text_pair_list[0], len(file_text_pair_list))
+    # print(file_text_pair_list[0], len(file_text_pair_list))
 
-    for i in range(10):
+    path, mel, text = train_dataset[0]
+    print(path, mel.shape, text)
 
-        path, mel, text = dataset[i]
+    path, mel, text = valid_dataset[0]
+    print(path, mel.shape, text)
 
-        print(path, text, configs['dataset_meta_path'])
+
+    # Saving mel.pt files for Waveglow examples
+
+    import random
+    for i in random.sample(range(len(train_dataset)), 20):
+
+        path, mel, text = train_dataset[i]
 
         mel_spectrogram_path = path.replace(configs['dataset_path'], './mel_spectrograms') + '.pt'
+        print(path, text, configs['dataset_meta_path'], end=' ')
+        print(mel_spectrogram_path)
 
-        mel_tensor = torch.tensor(mel + 6)
+        # mel_tensor = torch.tensor(mel + 6)
+        mel_tensor = torch.tensor(mel)
         
         try:
             torch.save(mel_tensor, mel_spectrogram_path)
@@ -255,5 +301,6 @@ if __name__ == '__main__':
             dir_name = os.path.dirname(mel_spectrogram_path)
             os.makedirs(dir_name, exist_ok=True)
             torch.save(mel_tensor, mel_spectrogram_path)
+
 
 
