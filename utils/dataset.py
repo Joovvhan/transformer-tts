@@ -68,6 +68,7 @@ class AudioTextDataset(Dataset):
         if configs['text_encoding_mode'] == 'jamo':
             encoding = text2encoding(text)
         elif configs['text_encoding_mode'] == 'phoneme':
+            global PHONEME_DICT
             if text not in PHONEME_DICT:
                 phone = g2pk(text)
                 encoding = text2encoding(phone)
@@ -323,6 +324,13 @@ def prepare_data_loaders(configs):
         print(f"No meta file [{configs['dataset_meta_path_train']}] and [{configs['dataset_meta_path_valid']}]")
 
         split_train_test_set(configs['dataset_meta_path'], configs['dataset_meta_path_train'], configs['dataset_meta_path_valid'], configs['valid_ratio'])
+
+    if configs['text_encoding_mode'] == 'phoneme':
+        global PHONEME_DICT
+        print(f'* Applying G2PK to all texts')
+        for file, text in tqdm(file_text_pair_list):
+            phone = g2pk(text)
+            PHONEME_DICT[text] = phone
 
     return True
 

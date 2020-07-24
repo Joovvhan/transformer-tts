@@ -4,7 +4,7 @@ import argparse
 
 from settings import configs
 from utils import dataset
-from utils.dataset import prepare_data_loaders, get_data_loaders
+from utils.dataset import prepare_data_loaders, get_data_loaders, PHONEME_DICT
 from model import DummyModel as Model
 
 def main():

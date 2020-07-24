@@ -15,6 +15,8 @@
 - [ ] Tensorboard logging
 - [ ] requirements.txt or Docker image
 - [ ] overwrite configs with parsed arguments
+- [ ] Check why phoneme dictionary is of length 12463
+- [ ] Make phoneme dictionary process multi-threaded
 
 #### SETUP
 1. git clone https://github.com/Joovvhan/transformer-tts.git
