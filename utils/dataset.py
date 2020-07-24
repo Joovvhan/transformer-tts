@@ -12,17 +12,18 @@ import librosa
 import torch
 
 import shutil
-
 import threading
-
 from time import sleep
-
 from scipy import signal
+
+from g2pk import G2p
+g2pk = G2p()
 
 import sys 
 sys.path.append(os.path.join(os.path.dirname(__file__), '../'))
-
 from settings import configs
+
+from utils import text2encoding, encoding2text
 
 FTPair = namedtuple('FileTextPair', ['file_path', 'text'])
 
@@ -40,20 +41,36 @@ class AudioTextDataset(Dataset):
 
         file_path, text = self.file_text_pair_list[idx]
 
-        fs, audio = wavfile.read(file_path)
-
-        if configs['audio_dtype'] == np.int16:
-            audio = audio / 2 ** 15
-        elif configs['audio_dtype'] == np.int32:
-            audio = audio / 2 ** 31
+        mel_spectrogram_path = file_path.replace(self.configs['dataset_path'], './mel_spectrograms') + '.pt'
+        if self.configs['mel_loading'] and os.path.isfile(mel_spectrogram_path):
+            mel = torch.load(mel_spectrogram_path)
         else:
-            assert False, f"Unknown audio_dtype {configs['audio_dtype']}"
+            fs, audio = wavfile.read(file_path)
 
-        assert fs == configs['fs'], f"{file_path} sampling rate does not match {fs} != {configs['fs']}"
-        
-        mel = audio2mel(audio, self.configs)
+            if configs['audio_dtype'] == np.int16:
+                audio = audio / 2 ** 15
+            elif configs['audio_dtype'] == np.int32:
+                audio = audio / 2 ** 31
+            else:
+                assert False, f"Unknown audio_dtype {configs['audio_dtype']}"
 
-        return (file_path, mel, text) # ./korean-single-speaker-speech-dataset-22050/kss/1/1_0000.wav (80, 305) 그는 괜찮은 척하려고 애쓰는 것 같았다.
+            assert fs == configs['fs'], f"{file_path} sampling rate does not match {fs} != {configs['fs']}"
+            
+            mel = audio2mel(audio, self.configs)
+            mel = torch.tensor(mel)
+
+            if self.configs['mel_loading']:
+                torch.save(mel, mel_spectrogram_path)
+
+        if configs['text_encoding_mode'] == 'character':
+            encoding = text2encoding(text)
+        elif configs['text_encoding_mode'] == 'phoneme':
+            text = g2pk(text)
+            encoding = text2encoding(text)
+        encoding = torch.tensor(encoding)
+
+        return (file_path, mel, text, encoding) 
+        # ./korean-single-speaker-speech-dataset-22050/kss/1/1_0000.wav (80, 305) 그는 괜찮은 척하려고 애쓰는 것 같았다. [6, 43, 8, 43, ..., 25, 1]
 
 def load_file_text_pair_list(meta_file_path, meta_type='kss'):
 
@@ -261,17 +278,60 @@ def collate_function(data_list):
     mel_list = list()
     mel_length_list = list()
     text_list = list()
+    encoded_list = list()
+    encoded_length_list = list()
 
-    for (file_path, mel, text) in data_list:
+    for (file_path, mel, text, encoded) in data_list:
         path_list.append(file_path)
         text_list.append(text)
-        mel_list.append(torch.tensor(mel.T)) # (T, 80)
+        # mel_list.append(torch.tensor(mel.T)) # (T, 80)
+        mel_list.append(mel.T) # (T, 80)
         mel_length_list.append(mel.shape[1])
+        # encoded_list.append(torch.tensor(encoded)) # (L)
+        encoded_list.append(encoded) # (L)
+        encoded_length_list.append(len(encoded))
         
     mel_batch = pad_sequence(mel_list, batch_first=True) # (B, T, 80)
-    # mel_batch = None
+    encoded_batch = pad_sequence(encoded_list, batch_first=True) # (B, L)
 
-    return path_list, mel_batch, text_list, mel_length_list
+    return path_list, mel_batch, encoded_batch, text_list, mel_length_list, encoded_length_list
+
+def prepare_data_loaders(configs):
+    file_text_pair_list = load_file_text_pair_list(configs['dataset_meta_path'])
+    check_file_existence(file_text_pair_list)
+    proper_configuration = check_wavfile_configuration(file_text_pair_list)
+
+    if not proper_configuration:
+        convert_dataset_as_configuration(file_text_pair_list, configs)
+        configs['dataset_meta_path'] = configs['converted_meta_path']
+        configs['dataset_meta_path_train'] = configs['dataset_meta_path'].replace('.txt', '_train.txt')
+        configs['dataset_meta_path_valid'] = configs['dataset_meta_path'].replace('.txt', '_valid.txt')
+        configs['dataset_path'] = configs['converted_dataset_path']
+
+    if not os.path.isfile(configs['dataset_meta_path_train']) or not os.path.isfile(configs['dataset_meta_path_valid']):
+
+        print(f"No meta file [{configs['dataset_meta_path_train']}] and [{configs['dataset_meta_path_valid']}]")
+
+        split_train_test_set(configs['dataset_meta_path'], configs['dataset_meta_path_train'], configs['dataset_meta_path_valid'], configs['valid_ratio'])
+
+    return True
+
+def get_data_loaders(configs):
+    
+    train_dataset = AudioTextDataset(configs['dataset_meta_path_train'], configs)
+    valid_dataset = AudioTextDataset(configs['dataset_meta_path_valid'], configs)
+
+    train_dataset_loader = torch.utils.data.DataLoader(train_dataset, 
+                                                       batch_size=configs['batch_size'], 
+                                                       shuffle=True, num_workers=8, 
+                                                       collate_fn=collate_function)
+                                                       
+    valid_dataset_loader = torch.utils.data.DataLoader(valid_dataset,
+                                                       batch_size=configs['batch_size'], 
+                                                       shuffle=False, num_workers=8, 
+                                                       collate_fn=collate_function)
+
+    return train_dataset_loader, valid_dataset_loader
 
 if __name__ == '__main__':
     file_text_pair_list = load_file_text_pair_list(configs['dataset_meta_path'])
@@ -306,22 +366,22 @@ if __name__ == '__main__':
 
     # print(file_text_pair_list[0], len(file_text_pair_list))
 
-    path, mel, text = train_dataset[0]
-    print(path, mel.shape, text)
+    path, mel, text, encoded = train_dataset[0]
+    print(path, mel.shape, text, encoded)
 
-    path, mel, text = valid_dataset[0]
-    print(path, mel.shape, text)
+    path, mel, text, encoded = valid_dataset[0]
+    print(path, mel.shape, text, encoded)
 
-    for batch in train_dataset_loader:
-        print(batch[0])
-        print(batch[1].shape)
-        print(batch[2])
+    for batch in train_dataset_loader: # path_list, mel_batch, encoded_batch, text_list, mel_length_list, encoded_length_list
+        print(batch[0], batch[3])
+        print(batch[1].shape, batch[4])
+        print(batch[2].shape, batch[5])
         break
 
     for batch in valid_dataset_loader:
-        print(batch[0])
-        print(batch[1].shape)
-        print(batch[2])
+        print(batch[0], batch[3])
+        print(batch[1].shape, batch[4])
+        print(batch[2].shape, batch[5])
         break
 
 

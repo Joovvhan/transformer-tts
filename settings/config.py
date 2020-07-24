@@ -62,6 +62,14 @@ config_dict.update({
     "batch_size": 8,
 })
 
+config_dict.update({
+    "text_encoding_mode": 'jamo',
+    "text_encoding_mode": 'phoneme',
+})
+
+config_dict.update({
+    "mel_loading": True
+})
 
 print('Configuration Dictionary List')
 for key in config_dict:
