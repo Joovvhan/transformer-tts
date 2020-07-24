@@ -27,11 +27,14 @@ from utils import text2encoding, encoding2text
 
 FTPair = namedtuple('FileTextPair', ['file_path', 'text'])
 
+PHONEME_DICT = dict()
+
 class AudioTextDataset(Dataset):
 
     def __init__(self, meta_file_path, configs):# , transform=None):
         self.file_text_pair_list = load_file_text_pair_list(meta_file_path)
         self.configs = configs
+        
         # self.transform = transform
 
     def __len__(self):
@@ -62,11 +65,18 @@ class AudioTextDataset(Dataset):
             if self.configs['mel_loading']:
                 torch.save(mel, mel_spectrogram_path)
 
-        if configs['text_encoding_mode'] == 'character':
+        if configs['text_encoding_mode'] == 'jamo':
             encoding = text2encoding(text)
         elif configs['text_encoding_mode'] == 'phoneme':
-            text = g2pk(text)
-            encoding = text2encoding(text)
+            if text not in PHONEME_DICT:
+                phone = g2pk(text)
+                encoding = text2encoding(phone)
+                PHONEME_DICT[text] = phone
+            else:
+                phone = PHONEME_DICT[text]
+                encoding = text2encoding(phone)
+        else:
+            assert 0, f"Unknown text encoding mode configs['text_encoding_mode']={configs['text_encoding_mode']}"
         encoding = torch.tensor(encoding)
 
         return (file_path, mel, text, encoding) 

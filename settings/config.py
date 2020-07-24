@@ -63,12 +63,17 @@ config_dict.update({
 })
 
 config_dict.update({
-    "text_encoding_mode": 'jamo',
+    # "text_encoding_mode": 'jamo',
     "text_encoding_mode": 'phoneme',
 })
 
 config_dict.update({
     "mel_loading": True
+})
+
+config_dict.update({
+    "embbeding_dim": 512,
+    "encoder_prenet_dim": 512,
 })
 
 print('Configuration Dictionary List')

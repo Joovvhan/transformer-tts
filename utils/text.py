@@ -34,6 +34,8 @@ decoding_dict = dict()
 for key in encoding_dict:
     decoding_dict[encoding_dict[key]] = key
 
+ENCODING_SIZE = len(encodable_chars)
+
 def text2encoding(text):
     text = jamotools.split_syllables(text, jamo_type="JAMO")
     return [encoding_dict[char] for char in text]
@@ -45,3 +47,5 @@ print(f'Encodable Character List (#{len(encoding_dict)})')
 for key in encoding_dict:
     print((key, hex(ord(key)), encoding_dict[key]), end=' ')
 print('\n')
+
+
