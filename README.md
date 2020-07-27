@@ -20,9 +20,10 @@
 
 #### SETUP
 1. git clone https://github.com/Joovvhan/transformer-tts.git
-2. source scripts/set_locale.sh
-3. source scripts/init.sh 
-4. python main.py
+2. cd transformer-tts
+3. source scripts/set_locale.sh
+4. source scripts/init.sh 
+5. python main.py
 
 #### Reference
 * Neural Speech Synthesis with Transformer Network
