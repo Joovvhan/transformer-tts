@@ -9,7 +9,7 @@ from model import DummyModel as Model
 
 def main():
 
-    prepare_data_loaders(configs)
+    #prepare_data_loaders(configs)
 
     for epoch in range(10):
 
@@ -23,7 +23,10 @@ def main():
             # batch = (path_list, mel_batch, encoded_batch, text_list, mel_length_list, encoded_length_list)
             # Check collate_function in utils/dataset.py
             path_list, mel_batch, encoded_batch, text_list, mel_length_list, encoded_length_list = batch
-            output = model(encoded_batch)
+
+            print('encoded batch : ', encoded_batch.shape)
+            print('mel_length list : ', mel_batch.shape)
+            output = model(encoded_batch, mel_batch)
             # print(output.shape)
 
         t1 = datetime.now()

@@ -68,17 +68,22 @@ config_dict.update({
 })
 
 config_dict.update({
-    "mel_loading": True
+    "mel_loading": False
 })
 
 config_dict.update({
-    "embbeding_dim": 512,
+    "embedding_dim": 512,
     "encoder_prenet_dim": 512,
+})
+
+config_dict.update({
+    "num_hidden": 256,
+    "multihead_num": 4,
 })
 
 print('Configuration Dictionary List')
 for key in config_dict:
-    if key is "mel_basis":
+    if key == "mel_basis":
         print(f'{key:^30s} | {config_dict[key].shape}')
     else:
         print(f'{key:^30s} | {config_dict[key]}')

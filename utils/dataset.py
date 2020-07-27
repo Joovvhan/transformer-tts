@@ -44,7 +44,7 @@ class AudioTextDataset(Dataset):
 
         file_path, text = self.file_text_pair_list[idx]
 
-        mel_spectrogram_path = file_path.replace(self.configs['dataset_path'], './mel_spectrograms') + '.pt'
+        mel_spectrogram_path = file_path.replace('./korean-single-speaker-speech-dataset-22050', './mel_spectrograms') + '.pt'
         if self.configs['mel_loading'] and os.path.isfile(mel_spectrogram_path):
             mel = torch.load(mel_spectrogram_path)
         else:
@@ -56,9 +56,7 @@ class AudioTextDataset(Dataset):
                 audio = audio / 2 ** 31
             else:
                 assert False, f"Unknown audio_dtype {configs['audio_dtype']}"
-
             assert fs == configs['fs'], f"{file_path} sampling rate does not match {fs} != {configs['fs']}"
-            
             mel = audio2mel(audio, self.configs)
             mel = torch.tensor(mel)
 
@@ -336,8 +334,10 @@ def prepare_data_loaders(configs):
 
 def get_data_loaders(configs):
     
-    train_dataset = AudioTextDataset(configs['dataset_meta_path_train'], configs)
-    valid_dataset = AudioTextDataset(configs['dataset_meta_path_valid'], configs)
+    #train_dataset = AudioTextDataset(configs['dataset_meta_path_train'], configs)
+    train_dataset = AudioTextDataset('./korean-single-speaker-speech-dataset-22050/transcript.v.1.4_train.txt', configs)
+    #valid_dataset = AudioTextDataset(configs['dataset_meta_path_valid'], configs)
+    valid_dataset = AudioTextDataset('./korean-single-speaker-speech-dataset-22050/transcript.v.1.4_valid.txt', configs)
 
     train_dataset_loader = torch.utils.data.DataLoader(train_dataset, 
                                                        batch_size=configs['batch_size'], 

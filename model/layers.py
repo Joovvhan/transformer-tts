@@ -5,6 +5,7 @@ from torch.nn import BatchNorm1d, ReLU, Dropout
 from torch.nn import ModuleList, Sequential
 from torch import nn
 from utils import ENCODING_SIZE
+import numpy as np
 
 
 class DummyEmbedding(torch.nn.Module):
@@ -14,9 +15,10 @@ class DummyEmbedding(torch.nn.Module):
     Output: (B, L, H)
     '''
 
-    def __init__(self, num_embedding, embedding_dim):
+    def __init__(self, configs):
         super(DummyEmbedding, self).__init__()
-        self.embedding = torch.nn.Embedding(num_embedding, embedding_dim, padding_idx=0)
+
+        self.embedding = torch.nn.Embedding(configs['n_mel_channels'], configs['embedding_dim'], padding_idx=0)
 
     def forward(self, input_tensor):
 
@@ -49,8 +51,9 @@ class DummyPrenetModule(torch.nn.Module):
         '''
 
         self.layers = ModuleList([
-            Conv1d(512, 512, 5, padding=2),
-            BatchNorm1d(512),
+            Conv1d(self.configs['embedding_dim'],
+                   self.configs['embedding_dim'], 5, padding=2),
+            BatchNorm1d(self.configs['embedding_dim']),
             ReLU(),  
             Dropout(dropout_rate),         
         ])
@@ -96,31 +99,218 @@ class DummyPrenet(torch.nn.Module):
         return output_tensor
 
 
+class EncoderPrenet(torch.nn.Module):
+    def __init__(self, configs):
+        super(EncoderPrenet, self).__init__()
+        self.configs = configs
+        self.embedding_dim = configs['embedding_dim']
+        self.embed = torch.nn.Embedding(ENCODING_SIZE, configs['embedding_dim'])
+        self.prenet_layers = Conv1d(configs['embedding_dim'], configs['num_hidden'], kernel_size=5,
+                                    padding=int(np.floor(5/2)))
+        self.batch_norm = torch.nn.BatchNorm1d(configs['num_hidden'])
+        self.dropout = torch.nn.Dropout(p=0.2)
+        self.prenet_linear = Linear(configs['num_hidden'], configs['num_hidden'])
+
+    def forward(self, input_tensor):
+        print("encoder prenet : ", input_tensor.shape)
+        tensor = self.embed(input_tensor)
+        print("embeded : ", tensor.shape)
+        tensor = tensor.transpose(1,2)
+        print("transpose : ", tensor.shape)
+        #for layer in self.prenet_layers:
+        tensor = self.prenet_layers(tensor)  # (B, H, L) -> (B, H, L)
+        tensor = self.batch_norm(tensor)
+        tensor = self.dropout(tensor)
+        print("prenet layer : ", tensor.shape)
+        tensor = tensor.permute(0, 2, 1)  # (B, H, L) -> (B, L, H)
+        print("transpose : ", tensor.shape)
+        tensor = self.prenet_linear(tensor)  # (B, L, H) -> (B, L, H)
+        print("prenet linear : ", tensor.shape)
+        output_tensor = tensor
+
+        return output_tensor
+
+
+class DecoderPrenet(torch.nn.Module):
+    def __init__(self, configs):
+        super(DecoderPrenet, self).__init__()
+        self.configs = configs
+        self.num_mels = self.configs['n_mel_channels']
+        self.num_hidden = self.configs['num_hidden']
+        self.layers = ModuleList([
+            Linear(self.num_mels, self.num_hidden * 2),
+            ReLU(),
+            Dropout(p=0.2),
+            Linear(self.num_hidden * 2, self.num_hidden),
+            ReLU(),
+            Dropout(p=0.2)
+        ])
+
+    def forward(self, input_tensor):
+        print(input_tensor.dtype)
+        tensor = torch.Tensor(input_tensor)
+        print('prenet dedecoder ', torch.tensor(tensor).dtype)
+        print("decoder prenet input : ", tensor.shape)
+        for layer in self.layers:
+            tensor = layer(tensor)
+        print("Decoder prenet : ", tensor.shape)
+        return tensor
+
+
+class FFN(torch.nn.Module):
+    def __init__(self, configs):
+        super(FFN, self).__init__()
+        self.configs = configs
+        self.num_hidden = self.configs['num_hidden']
+        self.layers = ModuleList([
+            #패딩 디폴트 0이다 넣어fk
+            # https://pytorch.org/docs/master/generated/torch.nn.Conv1d.html
+            Conv1d(self.num_hidden,
+                   self.num_hidden * 4, 5),
+            ReLU(),
+            Conv1d(self.num_hidden * 4,
+                   self.num_hidden, 5)
+        ])
+        self.layer_norm = torch.nn.LayerNorm(self.num_hidden)
+
+    def forward(self, input_tensor):
+        tensor = input_tensor
+        tensor = tensor.transpose(1,2)
+        print("FFN tensor input : ", tensor.shape)
+        for layer in self.layers:
+            tensor = layer(tensor)
+        tensor = tensor.transpose(1,2)
+        tensor = self.layer_norm(tensor)
+        print("FFN tensor : ", tensor.shape)
+        return tensor
+
+
 class DummyAttention(torch.nn.Module):
     def __init__(self, configs):
         super(DummyAttention, self).__init__()
+        self.configs = configs
+        self.num_hidden = self.configs['num_hidden']
+        self.multihead_num = self.configs['multihead_num']
+        self.embedding_dim = configs['embedding_dim']
+        self.multihead = torch.nn.MultiheadAttention(configs['num_hidden'], self.multihead_num)
+        self.key = Linear(self.num_hidden, self.num_hidden, bias=False)
+        self.value = Linear(self.num_hidden, self.num_hidden, bias=False)
+        self.query = Linear(self.num_hidden, self.num_hidden, bias=False)
 
     def forward(self, input_tensor):
+        input_tensor_0 = input_tensor.size(0)
+        input_tensor_1 = input_tensor.size(1)
 
-        return output_tensor
+        print("attention input tensor size ", input_tensor.shape)
+        print("input tensor 0 ", input_tensor_0, "input tensor 1 ", input_tensor_1)
+
+        key = self.key(input_tensor).view(input_tensor_0,
+                                          input_tensor_1,
+                                          self.num_hidden)
+        print("Key : ", key.shape)
+        value = self.value(input_tensor).view(input_tensor_0,
+                                          input_tensor_1,
+                                          self.num_hidden)
+        '''value = self.value(input_tensor).view(input_tensor_0,
+                                          input_tensor_1,
+                                          self.multihead_num,
+                                          self.num_hidden // self.multihead_num)'''
+        print("value :", value.shape)
+        query = self.query(input_tensor).view(input_tensor_0,
+                                          input_tensor_1,
+                                          self.num_hidden)
+        print("query : ", query.shape)
+        return self.multihead(key, value, query)
+
+
+class Encoder(torch.nn.Module):
+    def __init__(self, configs):
+        super(Encoder, self).__init__()
+        self.configs = configs
+        self.encoder_prenet = EncoderPrenet(configs)
+        self.attention = DummyAttention(configs)
+        self.ffn = FFN(configs)
+
+    def forward(self, input_tensor):
+        print("forward : ", input_tensor.shape)
+        tensor = self.encoder_prenet(input_tensor)
+        print("encoder prenet : ", tensor.shape)
+        attns = list()
+        tensor, attn = self.attention(tensor)
+        print("Attention ", tensor.shape)
+        tensor = self.ffn(tensor)
+        print("FFN : ", tensor.shape)
+        attns.append(attn)
+        '''for layer, ffn in zip(self.attention, self.ffn):
+            tensor, attn = layer(tensor)
+            tensor = ffn(tensor)
+            attns.append(tensor)'''
+        return tensor, attns
+
+
+
+class Decoder(torch.nn.Module):
+    def __init__(self, configs):
+        super(Decoder, self).__init__()
+        self.configs = configs
+        self.decoder_prenet = DecoderPrenet(configs)
+        self.attention = DummyAttention(configs)
+        self.ffn = FFN(configs)
+        self.num_hidden = configs['num_hidden']
+        self.num_mels = configs['n_mel_channels']
+        self.mel_linear = Linear(self.num_hidden, self.num_mels)
+        self.stop_linear = Linear(self.num_hidden, 1)
+
+    def forward(self, input_tensor, mel_input):
+        input_tensor_0 = input_tensor.size(0)
+        input_tensor_1 = input_tensor.size(1)
+        print('init : ', input_tensor.dtype)
+        tensor = self.decoder_prenet(mel_input.float())
+        print("Decoder prenet : ", tensor.shape)
+
+        attn_dot_list = list()
+        attn_dec_list = list()
+
+        '''for i,(selfattn, dotattn, ffn) in enumerate(self.attention, self.attention, self.ffn):
+            tensor, attn_dec = selfattn(tensor)
+            tensor, attn_dot = dotattn(input_tensor)
+            decoder_input = ffn(tensor)
+            attn_dot_list.append(attn_dot)
+            attn_dec_list.append(attn_dec)'''
+        tensor, attn_dec = self.attention(tensor)
+        tensor, attn_dot = self.attention(tensor)
+        decoder_input = self.ffn(tensor)
+        attn_dot_list.append(attn_dot)
+        attn_dec_list.append(attn_dec)
+
+        mel_out = self.mel_linear(tensor)
+
+        stop_tokens = self.stop_linear(tensor)
+
+        return mel_out, attn_dot_list, stop_tokens, attn_dec_list
 
 
 class DummyModel(torch.nn.Module):
     def __init__(self, configs):
         super(DummyModel, self).__init__()
         self.configs = configs
-        self.embedding = DummyEmbedding(ENCODING_SIZE, configs["embbeding_dim"])
-        self.encoder_prenet = DummyPrenet(configs)
+        #self.embedding = DummyEmbedding(configs)
+        #self.encoder_prenet = DummyPrenet(configs)
 
-    def forward(self, input_tensor):
-        tensor = self.embedding(input_tensor)
-        tensor = self.encoder_prenet(tensor)
+        self.encoder = Encoder(configs)
+        self.decoder = Decoder(configs)
 
-        output_tensor = tensor
+    def forward(self, input_tensor, mel_input):
+        #print("before embedding : ", input_tensor.shape)
+        #tensor = self.embedding(input_tensor)
+        #print("before encoder : ", tensor.shape)
+        #tensor = self.encoder_prenet(tensor)
+        tensor, attn_enc = self.encoder.forward(input_tensor)
+        print("before decoder : ", tensor.shape)
+        return self.decoder.forward(tensor, mel_input)
 
-        return output_tensor
 
-if __name__ == '__main__':
+'''if __name__ == '__main__':
     DummyModel()
     DummyAttention()
-    DummyEmbedding()
+    DummyEmbedding()'''
