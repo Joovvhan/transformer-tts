@@ -6,10 +6,16 @@ from settings import configs
 from utils import dataset
 from utils.dataset import prepare_data_loaders, get_data_loaders, PHONEME_DICT
 from model import DummyModel as Model
+import torch
+
+
+PATH = "./test_model"
 
 def main():
 
     #prepare_data_loaders(configs)
+
+    cuda = torch.device('cuda')
 
     for epoch in range(10):
 
@@ -17,16 +23,15 @@ def main():
 
         t0 = datetime.now()
 
-        model = Model(configs)
+        model = Model(configs).cuda()
+        print("ACIALID : ", torch.cuda.is_available())
 
         for batch in tqdm(train_data_loader):
             # batch = (path_list, mel_batch, encoded_batch, text_list, mel_length_list, encoded_length_list)
             # Check collate_function in utils/dataset.py
             path_list, mel_batch, encoded_batch, text_list, mel_length_list, encoded_length_list = batch
 
-            print('encoded batch : ', encoded_batch.shape)
-            print('mel_length list : ', mel_batch.shape)
-            output = model(encoded_batch, mel_batch)
+            output = model(torch.tensor(encoded_batch), torch.tensor(mel_batch))
             # print(output.shape)
 
         t1 = datetime.now()
@@ -34,12 +39,13 @@ def main():
         for batch in tqdm(valid_data_loader):
 
             path_list, mel_batch, encoded_batch, text_list, mel_length_list, encoded_length_list = batch
-            output = model(encoded_batch)
+            output = model(torch.tensor(encoded_batch), torch.tensor(mel_batch))
 
         t2 = datetime.now()
 
         print(t1 - t0, t2 - t1)
 
+    torch.save(model, PATH)
 
     return
 

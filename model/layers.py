@@ -1,11 +1,20 @@
 import torch
 from torch.nn import Conv1d, Conv2d, Linear
 from torch.nn import BatchNorm1d, ReLU, Dropout
-# from torch.nn.functional import relu
 from torch.nn import ModuleList, Sequential
 from torch import nn
 from utils import ENCODING_SIZE
 import numpy as np
+
+import logging
+
+log = logging.getLogger('log')
+log.setLevel(logging.DEBUG)
+formatter = logging.Formatter('[%(levelname)s] (%(filename)s:%(lineno)d) > %(message)s')
+fileHandler = logging.FileHandler('./log.txt')
+fileHandler.setFormatter(formatter)
+
+log.addHandler(fileHandler)
 
 
 class DummyEmbedding(torch.nn.Module):
@@ -74,12 +83,10 @@ class DummyPrenet(torch.nn.Module):
     def __init__(self, configs):
         super(DummyPrenet, self).__init__()
         self.configs = configs
-
         '''
         From Transformer-TTS:
         we add a linear projection after the final ReLU activation
         '''
-
         self.prenet_layers = ModuleList([DummyPrenetModule(configs) for i in range(3)])
         self.pernet_linear = Linear(512, 512)
 
@@ -89,12 +96,12 @@ class DummyPrenet(torch.nn.Module):
 
         for layer in self.prenet_layers:
             tensor = layer(tensor) # (B, H, L) -> (B, H, L)
-        # print(tensor.shape)
         tensor = tensor.permute(0, 2, 1) # (B, H, L) -> (B, L, H)
 
         tensor = self.pernet_linear(tensor) # (B, L, H) -> (B, L, H)
 
         output_tensor = tensor
+        log.info("prenet forward ")
         
         return output_tensor
 
@@ -112,22 +119,20 @@ class EncoderPrenet(torch.nn.Module):
         self.prenet_linear = Linear(configs['num_hidden'], configs['num_hidden'])
 
     def forward(self, input_tensor):
-        print("encoder prenet : ", input_tensor.shape)
         tensor = self.embed(input_tensor)
-        print("embeded : ", tensor.shape)
-        tensor = tensor.transpose(1,2)
-        print("transpose : ", tensor.shape)
+        tensor = tensor.transpose(1, 2)
+        #log.debug("transpose : ", tensor.shape)
         #for layer in self.prenet_layers:
         tensor = self.prenet_layers(tensor)  # (B, H, L) -> (B, H, L)
         tensor = self.batch_norm(tensor)
         tensor = self.dropout(tensor)
-        print("prenet layer : ", tensor.shape)
+        #log.debug("prenet layer : ", tensor.shape)
         tensor = tensor.permute(0, 2, 1)  # (B, H, L) -> (B, L, H)
-        print("transpose : ", tensor.shape)
+        #log.debug("transpose : ", tensor.shape)
         tensor = self.prenet_linear(tensor)  # (B, L, H) -> (B, L, H)
-        print("prenet linear : ", tensor.shape)
+        #log.debug("prenet linear : ", tensor.shape)
         output_tensor = tensor
-
+        log.info('encoder prenet ')
         return output_tensor
 
 
@@ -147,13 +152,10 @@ class DecoderPrenet(torch.nn.Module):
         ])
 
     def forward(self, input_tensor):
-        print(input_tensor.dtype)
-        tensor = torch.Tensor(input_tensor)
-        print('prenet dedecoder ', torch.tensor(tensor).dtype)
-        print("decoder prenet input : ", tensor.shape)
+        tensor = input_tensor
         for layer in self.layers:
             tensor = layer(tensor)
-        print("Decoder prenet : ", tensor.shape)
+        log.info("Decoder prenet ")
         return tensor
 
 
@@ -176,12 +178,11 @@ class FFN(torch.nn.Module):
     def forward(self, input_tensor):
         tensor = input_tensor
         tensor = tensor.transpose(1,2)
-        print("FFN tensor input : ", tensor.shape)
         for layer in self.layers:
             tensor = layer(tensor)
         tensor = tensor.transpose(1,2)
         tensor = self.layer_norm(tensor)
-        print("FFN tensor : ", tensor.shape)
+        log.info("FFN tensor ")
         return tensor
 
 
@@ -201,13 +202,9 @@ class DummyAttention(torch.nn.Module):
         input_tensor_0 = input_tensor.size(0)
         input_tensor_1 = input_tensor.size(1)
 
-        print("attention input tensor size ", input_tensor.shape)
-        print("input tensor 0 ", input_tensor_0, "input tensor 1 ", input_tensor_1)
-
         key = self.key(input_tensor).view(input_tensor_0,
                                           input_tensor_1,
                                           self.num_hidden)
-        print("Key : ", key.shape)
         value = self.value(input_tensor).view(input_tensor_0,
                                           input_tensor_1,
                                           self.num_hidden)
@@ -215,11 +212,9 @@ class DummyAttention(torch.nn.Module):
                                           input_tensor_1,
                                           self.multihead_num,
                                           self.num_hidden // self.multihead_num)'''
-        print("value :", value.shape)
         query = self.query(input_tensor).view(input_tensor_0,
                                           input_tensor_1,
                                           self.num_hidden)
-        print("query : ", query.shape)
         return self.multihead(key, value, query)
 
 
@@ -232,21 +227,16 @@ class Encoder(torch.nn.Module):
         self.ffn = FFN(configs)
 
     def forward(self, input_tensor):
-        print("forward : ", input_tensor.shape)
         tensor = self.encoder_prenet(input_tensor)
-        print("encoder prenet : ", tensor.shape)
         attns = list()
         tensor, attn = self.attention(tensor)
-        print("Attention ", tensor.shape)
         tensor = self.ffn(tensor)
-        print("FFN : ", tensor.shape)
         attns.append(attn)
         '''for layer, ffn in zip(self.attention, self.ffn):
             tensor, attn = layer(tensor)
             tensor = ffn(tensor)
             attns.append(tensor)'''
         return tensor, attns
-
 
 
 class Decoder(torch.nn.Module):
@@ -264,9 +254,7 @@ class Decoder(torch.nn.Module):
     def forward(self, input_tensor, mel_input):
         input_tensor_0 = input_tensor.size(0)
         input_tensor_1 = input_tensor.size(1)
-        print('init : ', input_tensor.dtype)
-        tensor = self.decoder_prenet(mel_input.float())
-        print("Decoder prenet : ", tensor.shape)
+        tensor = self.decoder_prenet(mel_input.type(torch.cuda.FloatTensor))
 
         attn_dot_list = list()
         attn_dec_list = list()
@@ -301,13 +289,14 @@ class DummyModel(torch.nn.Module):
         self.decoder = Decoder(configs)
 
     def forward(self, input_tensor, mel_input):
-        #print("before embedding : ", input_tensor.shape)
-        #tensor = self.embedding(input_tensor)
-        #print("before encoder : ", tensor.shape)
-        #tensor = self.encoder_prenet(tensor)
-        tensor, attn_enc = self.encoder.forward(input_tensor)
-        print("before decoder : ", tensor.shape)
-        return self.decoder.forward(tensor, mel_input)
+        '''print("before embedding : ", input_tensor.shape)
+        tensor = self.embedding(input_tensor)
+        print("before encoder : ", tensor.shape)
+        tensor = self.encoder_prenet(tensor)'''
+
+        tensor, attn_enc = self.encoder.forward(input_tensor.cuda())
+        #log.debug("before decoder : ", tensor.shape)
+        return self.decoder.forward(tensor, mel_input.cuda())
 
 
 '''if __name__ == '__main__':
