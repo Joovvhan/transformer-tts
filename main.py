@@ -12,7 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 MODEL_FOLDER = "./logs"
-MODEL_NAME = "test_model1"
+MODEL_NAME = "xavier_test2"
 PATH = MODEL_FOLDER + "/" + MODEL_NAME
 writer = SummaryWriter(PATH)
 
@@ -23,13 +23,16 @@ def main():
     cuda = torch.device('cuda')
     step = 0
 
+    model = Model(configs).cuda()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-5)
+
+
     for epoch in range(10):
 
         train_data_loader, valid_data_loader = get_data_loaders(configs)
 
         t0 = datetime.now()
 
-        model = Model(configs).cuda()
 
         for i, data in enumerate(train_data_loader):
             step += 1
@@ -37,8 +40,12 @@ def main():
 
             mel_out, attn_dot_list, stop_tokens, attn_dec_list = model(torch.tensor(encoded_batch),
                                                                        torch.tensor(mel_batch))
-            writer.add_scalar('loss', nn.L1Loss()(mel_out.cuda(), mel_batch.cuda()).item(), step)
+            loss = nn.L1Loss()(mel_out.cuda(), mel_batch.cuda())
+            writer.add_scalar('loss', loss.item(), step)
             print(nn.L1Loss()(mel_out.cuda(), mel_batch.cuda()).item())
+            optimizer.zero_grad()
+            loss.backward()
+
 
         '''for batch in tqdm(train_data_loader):
             # batch = (path_list, mel_batch, encoded_batch, text_list, mel_length_list, encoded_length_list)
