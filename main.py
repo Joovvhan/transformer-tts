@@ -4,6 +4,7 @@ import argparse
 
 from settings import configs
 from utils import dataset
+from utils import util
 from utils.dataset import prepare_data_loaders, get_data_loaders, PHONEME_DICT
 from model import DummyModel as Model
 import torch
@@ -23,24 +24,23 @@ writer = SummaryWriter(PATH)
 
 LOGGING_STEPS = 40
 
-def main():
 
+def train(args):
     #prepare_data_loaders(configs)
-
     cuda = torch.device('cuda')
     step = 0
     loss_list = list()
 
     model = Model(configs).cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-5)
+    if args.load != '':
+        model, optimizer, step = util.load_model(args.load, model, optimizer)
 
+    util.mkdir(args.save)
 
     for epoch in range(10):
 
         train_data_loader, valid_data_loader = get_data_loaders(configs)
-
-        t0 = datetime.now()
-
 
         for i, data in tqdm(enumerate(train_data_loader), total=int(len(train_data_loader.dataset) / train_data_loader.batch_size)):
             step += 1
@@ -53,6 +53,7 @@ def main():
             loss_list.append(loss.item())
             if step % LOGGING_STEPS == 0:
                 writer.add_scalar('loss', np.mean(loss_list), step)
+                util.save_model(model, optimizer, args.save, step)
                 loss_list = list()
             # print(nn.L1Loss()(mel_out.cuda(), mel_batch.cuda()).item())
             optimizer.zero_grad()
@@ -62,40 +63,28 @@ def main():
             # https://tutorials.pytorch.kr/beginner/pytorch_with_examples.html
             optimizer.step()
 
-
-        '''for batch in tqdm(train_data_loader):
-            # batch = (path_list, mel_batch, encoded_batch, text_list, mel_length_list, encoded_length_list)
-            # Check collate_function in utils/dataset.py
-            path_list, mel_batch, encoded_batch, text_list, mel_length_list, encoded_length_list = batch
-
-            mel_out, attn_dot_list, stop_tokens, attn_dec_list = model(torch.tensor(encoded_batch), torch.tensor(mel_batch))
-            writer.add_scalars('loss', mel_out.cuda() - mel_batch.cuda())
-            #print(mel_out.cuda() - mel_batch.cuda())
-
-
-        t1 = datetime.now()
-
-        for batch in tqdm(valid_data_loader):
-
-            path_list, mel_batch, encoded_batch, text_list, mel_length_list, encoded_length_list = batch
-            mel_out, attn_dot_list, stop_tokens, attn_dec_list = model(torch.tensor(encoded_batch), torch.tensor(mel_batch))
-
-        t2 = datetime.now()
-
-        print(t1 - t0, t2 - t1)'''
-
     torch.save(model, PATH)
 
     return
+
+
+def inference(args):
+    return
+
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', default='train', type=str,
                         help='Training or Inference Mode')
+    parser.add_argument('--save', default='test1', type=str,
+                        help='Save model')
+    parser.add_argument('--load', default='', type=str,
+                        help='load model')
 
     args = parser.parse_args()
-
     # I should overwrite configs with parsed arguments
-    
-    main()
+    if args.mode == 'train':
+        train(args)
+    else:
+        inference(args)
