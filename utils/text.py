@@ -43,6 +43,9 @@ def text2encoding(text):
 def encoding2text(encoding):
     return ''.join([decoding_dict[num] for num in encoding])
 
+def jamo2text(jamo):
+    return jamotools.join_jamos(jamo)
+
 print(f'Encodable Character List (#{len(encoding_dict)})')
 for key in encoding_dict:
     print((key, hex(ord(key)), encoding_dict[key]), end=' ')

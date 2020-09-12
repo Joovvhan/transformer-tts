@@ -6,6 +6,7 @@
 /mel_spectrograms
 /korean-single-speaker-speech-dataset
 /korean-single-speaker-speech-dataset-22050
+/logs
 
 *.ipynb
 *.wav
