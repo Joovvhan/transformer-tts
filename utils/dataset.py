@@ -300,7 +300,7 @@ def collate_function(data_list):
         encoded_list.append(encoded) # (L)
         encoded_length_list.append(len(encoded))
         
-    mel_batch = pad_sequence(mel_list, batch_first=True).float() # (B, T, 80)
+    mel_batch = pad_sequence(mel_list, batch_first=True, padding_value=-6.0).float() # (B, T, 80)
     encoded_batch = pad_sequence(encoded_list, batch_first=True) # (B, L)
 
     return path_list, mel_batch, encoded_batch, text_list, mel_length_list, encoded_length_list
