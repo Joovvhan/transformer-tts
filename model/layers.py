@@ -6,6 +6,7 @@ from torch import nn
 from utils import ENCODING_SIZE
 import numpy as np
 import math
+import copy
 
 import logging
 
@@ -16,6 +17,34 @@ fileHandler = logging.FileHandler('./log.txt')
 fileHandler.setFormatter(formatter)
 
 log.addHandler(fileHandler)
+
+
+def t_embedding(embedding_size, num_hidden):
+    emb = np.array([[pos_i / np.power(10000, 2 * (hid_idx // 2) / num_hidden)
+                     for hid_idx in range(num_hidden)]
+                    for pos_i in range(embedding_size)])
+
+    emb[:, 0::2] = np.sin(emb[:, 0::2])
+    emb[:, 1::2] = np.cos(emb[:, 1::2])
+    return torch.from_numpy(emb).type(torch.FloatTensor)
+
+
+def pos_emb(text_tensor):
+
+    '''text_embedding = text_tensor.ne(0).type(torch.float)
+    text_attention_embedding = text_tensor.eq(0)
+    mel_embedding_dimension = mel_tensor.shape[1]
+    mel_embedding = np.array([[[position / np.power(10000, 2 * i / mel_embedding_dimension)
+            for i in range(mel_embedding_dimension)]
+        if pos != 0 else np.zeros(mel_embedding_dimension)
+        for pos in range(mel_tensor.shape[0])]
+                              for position in range(mel_tensor.shape[2])
+    ])
+    mel_embedding[1:, 0::2] = np.sin(mel_embedding[1:, 0::2])  # dim 2i
+    mel_embedding[1:, 1::2] = np.cos(mel_embedding[1:, 1::2])  # dim 2i+1'''
+    text_attention_embedding = text_tensor.eq(0)
+    #text_embedding = text_position_embedding(text_tensor)
+    return text_attention_embedding
 
 
 class Linear(torch.nn.Module):
@@ -42,54 +71,6 @@ class Conv(torch.nn.Module):
         return self.conv(input_tensor)
 
 
-class DummyEmbedding(torch.nn.Module):
-
-    '''
-     Input: (B, L)
-    Output: (B, L, H)
-    '''
-
-    def __init__(self, configs):
-        super(DummyEmbedding, self).__init__()
-
-        self.embedding = torch.nn.Embedding(configs['n_mel_channels'], configs['embedding_dim'], padding_idx=0)
-
-    def forward(self, input_tensor):
-
-        output_tensor = self.embedding(input_tensor) # (B, L) -> (B, L, H)
-        output_tensor = torch.transpose(output_tensor, 1, 2) # (B, L, H) -> (B, H, L)
-
-        return output_tensor # (B, H, L)
-
-
-
-class DummyPrenet(torch.nn.Module):
-    def __init__(self, configs):
-        super(DummyPrenet, self).__init__()
-        self.configs = configs
-        '''
-        From Transformer-TTS:
-        we add a linear projection after the final ReLU activation
-        '''
-        self.prenet_layers = ModuleList([DummyPrenetModule(configs) for i in range(3)])
-        self.pernet_linear = Linear(512, 512)
-
-    def forward(self, input_tensor):
-
-        tensor = input_tensor
-
-        for layer in self.prenet_layers:
-            tensor = layer(tensor) # (B, H, L) -> (B, H, L)
-        tensor = tensor.permute(0, 2, 1) # (B, H, L) -> (B, L, H)
-
-        tensor = self.prenet_linear(tensor) # (B, L, H) -> (B, L, H)
-
-        output_tensor = tensor
-        log.info("prenet forward ")
-        
-        return output_tensor
-
-
 class EncoderPrenet(torch.nn.Module):
     def __init__(self, configs):
         super(EncoderPrenet, self).__init__()
@@ -101,18 +82,30 @@ class EncoderPrenet(torch.nn.Module):
         self.batch_norm = torch.nn.BatchNorm1d(configs['num_hidden'])
         self.dropout = torch.nn.Dropout(p=0.2)
         self.linear = Linear(configs['num_hidden'], configs['num_hidden'])
+        self.layers = ModuleList([
+            Conv1d(configs['num_hidden'], configs['num_hidden'],
+                   kernel_size=5,
+                   padding=int(np.floor(5 / 2))),
+            BatchNorm1d(configs['num_hidden']),
+            ReLU(),
+            Dropout(p=0.2),
+            Conv1d(configs['num_hidden'], configs['num_hidden'],
+                   kernel_size=5,
+                   padding=int(np.floor(5 / 2))),
+            BatchNorm1d(configs['num_hidden']),
+            ReLU(),
+            Dropout(p=0.2)
+        ])
 
-    def forward(self, input_tensor):
-        tensor = self.embed(input_tensor)
+    def forward(self, text_tensor):
+        tensor = self.embed(text_tensor)
         tensor = tensor.transpose(1, 2)
-        #log.debug("transpose : ", tensor.shape)
-        #for layer in self.prenet_layers:
-        tensor = self.conv(tensor)  # (B, H, L) -> (B, H, L)
+        tensor = self.conv(tensor)
         tensor = self.batch_norm(tensor)
         tensor = self.dropout(tensor)
-        #log.debug("prenet layer : ", tensor.shape)
+        for layer in self.layers:
+            tensor = layer(tensor)
         tensor = tensor.permute(0, 2, 1)  # (B, H, L) -> (B, L, H)
-        #log.debug("transpose : ", tensor.shape)
         tensor = self.linear(tensor)  # (B, L, H) -> (B, L, H)
         #log.debug("prenet linear : ", tensor.shape)
         output_tensor = tensor
@@ -130,8 +123,7 @@ class DecoderPrenet(torch.nn.Module):
             ReLU(),
             Dropout(p=0.2),
             Linear(self.num_hidden * 2, self.num_hidden),
-            ReLU(),
-            Dropout(p=0.2)
+            ReLU()
         ])
 
     def forward(self, input_tensor):
@@ -164,89 +156,33 @@ class FFN(torch.nn.Module):
         for layer in self.layers:
             tensor = layer(tensor)
         tensor = tensor.transpose(1, 2)
-
-        # Residual
         tensor = tensor + input_tensor
-
         tensor = self.layer_norm(tensor)
         return tensor
 
 
-class MultiheadAttention(torch.nn.Module):
-    def __init__(self, num_hidden):
-        super(MultiheadAttention, self).__init__()
-
-        self.num_hidden = num_hidden
-        self.attention_dropout = torch.nn.Dropout(p=0.1)
-
-    def forward(self, key, value, query, mask, query_mask):
-        attn = torch.bmm(query, key.transpose(1, 2))
-        attn = attn / math.sqrt(self.num_hidden)
-
-        result = torch.bmm(attn, value)
-        return result, attn
-
-
-class DummyAttention(torch.nn.Module):
+class Attention(torch.nn.Module):
     def __init__(self, configs):
-        super(DummyAttention, self).__init__()
+        super(Attention, self).__init__()
         self.configs = configs
         self.num_hidden = self.configs['num_hidden']
         self.multihead_num = self.configs['multihead_num']
         self.embedding_dim = configs['embedding_dim']
-        self.multihead = MultiheadAttention(self.num_hidden // self.multihead_num)
+        self.multihead = torch.nn.MultiheadAttention(self.num_hidden, self.multihead_num)
         self.key = Linear(self.num_hidden, self.num_hidden, bias=False)
         self.value = Linear(self.num_hidden, self.num_hidden, bias=False)
         self.query = Linear(self.num_hidden, self.num_hidden, bias=False)
         self.normalization = torch.nn.LayerNorm(self.num_hidden)
-        self.linear = Linear(self.num_hidden * 2, self.num_hidden)
 
-    def forward(self, input_tensor, input_tensor2, mask, query_mask):
-        batch_size = input_tensor.size(0)
-        input_key = input_tensor.size(1)
-        input_query = input_tensor2.size(1)
-        if query_mask is not None:
-            query_mask = query_mask.unsqueeze(-1).repeat(1, 1, input_key).repeat(self.num_hidden, 1, 1)
-        if mask is not None:
-            mask = mask.repeat(self.num_hidden, 1, 1)
-
-        key = self.key(input_tensor).view(batch_size,
-                                          input_key,
-                                          self.multihead_num,
-                                          self.num_hidden // self.multihead_num)
-        '''value = self.value(input_tensor).view(input_tensor_0,
-                                          input_tensor_1,
-                                          self.num_hidden)'''
-        value = self.value(input_tensor).view(batch_size,
-                                          input_key,
-                                          self.multihead_num,
-                                          self.num_hidden // self.multihead_num)
-        query = self.query(input_tensor).view(batch_size,
-                                              input_query,
-                                              self.multihead_num,
-                                              self.num_hidden // self.multihead_num)
-        key = key.permute(2, 0, 1, 3).contiguous().view(-1, input_key,
-                                                        self.num_hidden // self.multihead_num)
-        value = value.permute(2, 0, 1, 3).contiguous().view(-1, input_key,
-                                                            self.num_hidden // self.multihead_num)
-        query = query.permute(2, 0, 1, 3).contiguous().view(-1, input_query,
-                                                            self.num_hidden // self.multihead_num)
-
-        result, attns = self.multihead(key, value, query, mask, query_mask)
-        result = result.view(self.multihead_num, batch_size, input_query,
-                             self.num_hidden // self.multihead_num)
-        result = result.permute(1, 2, 0, 3).contiguous().view(batch_size, input_query, -1)
-
-        result = torch.cat([input_tensor, result], dim=-1)
-        result = self.linear(result)
-
-        # residual
-        result = result + input_tensor2
-
-        result = self.normalization(result)
-        return result, attns
-
-        # return self.multihead(key, value, query)
+    def forward(self, key_value_tensor, query_tensor, text_embedding=None, query_embedding=None):
+        key, value, query = key_value_tensor, key_value_tensor, query_tensor
+        if text_embedding is not None:
+            text_embedding = text_embedding.transpose(0, 1)
+        output_tensor, _ = self.multihead(query, key, value,
+                                          key_padding_mask=text_embedding)
+        output_tensor = output_tensor + query_tensor
+        output_tensor = self.normalization(output_tensor)
+        return output_tensor
 
 
 class Encoder(torch.nn.Module):
@@ -254,100 +190,69 @@ class Encoder(torch.nn.Module):
         super(Encoder, self).__init__()
         self.configs = configs
         self.encoder_prenet = EncoderPrenet(configs)
-        self.attention = DummyAttention(configs)
-        self.ffn = FFN(configs)
+        self.position_embedding = torch.nn.Embedding.from_pretrained(t_embedding(configs['embedding_dim'],
+                                                                                 configs['num_hidden']))
+        self.attention = torch.nn.ModuleList([Attention(configs)
+                                              for _ in range(3)])
+        self.ffn = torch.nn.ModuleList([FFN(configs)
+                                        for i in range(3)])
 
-    def forward(self, input_tensor):
-        c_mask = input_tensor.ne(0).type(torch.float)
-        mask = input_tensor.eq(0).unsqueeze(1).repeat(1, input_tensor.size(1), 1)
-        tensor = self.encoder_prenet(input_tensor)
-        attns = list()
-
-        tensor, attn = self.attention(tensor, tensor, mask, c_mask)
-        tensor = self.ffn(tensor)
-        attns.append(attn)
-        '''for layer, ffn in zip(self.attention, self.ffn):
-            tensor, attn = layer(tensor, mask, c_mask)
-            tensor = ffn(tensor)
-            attns.append(attn)'''
-        return tensor, c_mask, attns
+    def forward(self, text_tensor, text_attention_emb):
+        tensor = self.encoder_prenet(text_tensor)
+        position_embedding = torch.nn.Embedding.from_pretrained(t_embedding(text_tensor.shape[1],
+                                                                            self.configs['num_hidden'])).cuda()
+        text_emb = position_embedding(text_tensor)
+        tensor = tensor + text_emb
+        for attention_layer, ffn_layer in zip(self.attention, self.ffn):
+            tensor = attention_layer(tensor, tensor, text_embedding=text_attention_emb)
+            tensor = ffn_layer(tensor)
+        return tensor
 
 
 class Decoder(torch.nn.Module):
     def __init__(self, configs):
         super(Decoder, self).__init__()
         self.configs = configs
+        self.alpha = torch.nn.Parameter(torch.ones(1)).cuda()
         self.decoder_prenet = DecoderPrenet(configs)
-        self.attention = DummyAttention(configs)
+        self.attention = Attention(configs)
         self.ffn = FFN(configs)
         self.num_hidden = configs['num_hidden']
         self.num_mels = configs['n_mel_channels']
         self.mel_linear = Linear(self.num_hidden, self.num_mels)
         self.stop_linear = Linear(self.num_hidden, 1)
 
-    def forward(self, input_tensor, input_tensor2, c_mask, mel_input):
-        batch_size = input_tensor.size(0)
-        input_tensor_1 = input_tensor2.size(1)
-        tensor = self.decoder_prenet(mel_input.type(torch.cuda.FloatTensor))
+    def forward(self, text_tensor, text_attention_emb, input_tensor, mel_tensor):
+        output_tensor = self.decoder_prenet(mel_tensor.type(torch.cuda.FloatTensor))
 
-        '''m_mask = mel_input.ne(0).type(torch.float)
-        #print(m_mask.eq(0).unsqueeze(1))
-        #mask = m_mask.eq(0).unsqueeze(1).repeat(1, input_tensor_1, 1)
-        mask = m_mask.eq(0).unsqueeze(1)
-        if next(self.parameters()).is_cuda:
-            mask = mask + torch.triu(torch.ones(input_tensor_1, input_tensor_1).cuda(),
-                                     diagonal=1).byte()
-        else:
-            mask = mask + torch.triu(t.ones(input_tensor_1, input_tensor_1),
-                                     diagonal=1).repeat(batch_size, 1, 1).byte()
-        mask = mask.gt(0)
-        zero_mask = c_mask.eq(0).unsqueeze(-1).repeat(1, 1, input_tensor_1)
-        zero_mask = zero_mask.transpose(1, 2)'''
+        '''position_embedding = torch.nn.Embedding.from_pretrained(t_embedding(mel_tensor.shape[1],
+                                                                            self.configs['num_hidden'])).cuda()
 
-        attn_dot_list = list()
-        attn_dec_list = list()
+        text_emb = position_embedding(mel_tensor[:, :].type(torch.LongTensor).cuda())
+        print(mel_tensor.shape, output_tensor.shape, text_emb.shape)
+        output_tensor = text_emb + output_tensor'''
+        input_tensor = input_tensor.transpose(0, 1)
+        output_tensor = output_tensor.transpose(0, 1)
+        masked_tensor = self.attention(output_tensor, output_tensor)
+        output_tensor = self.attention(input_tensor, masked_tensor, text_embedding=None)
+        output_tensor = self.ffn(output_tensor)
+        output_tensor = output_tensor.transpose(0, 1)
+        mel_out = self.mel_linear(output_tensor)
 
-        '''for i,(selfattn, dotattn, ffn) in enumerate(self.attention, self.attention, self.ffn):
-            tensor, attn_dec = selfattn(tensor)
-            tensor, attn_dot = dotattn(input_tensor)
-            decoder_input = ffn(tensor)
-            attn_dot_list.append(attn_dot)
-            attn_dec_list.append(attn_dec)'''
-        output_tensor, attn_dec = self.attention(tensor, tensor, None, None)
-        tensor, attn_dot = self.attention(tensor, output_tensor, None, None)
-        tensor = self.ffn(tensor)
-        attn_dot_list.append(attn_dot)
-        attn_dec_list.append(attn_dec)
+        stop_tokens = self.stop_linear(output_tensor)
 
-        mel_out = self.mel_linear(tensor)
-
-        stop_tokens = self.stop_linear(tensor)
-
-        return mel_out, attn_dot_list, stop_tokens, attn_dec_list
+        return mel_out, stop_tokens
 
 
-class DummyModel(torch.nn.Module):
+class Model(torch.nn.Module):
     def __init__(self, configs):
-        super(DummyModel, self).__init__()
+        super(Model, self).__init__()
         self.configs = configs
-        #self.embedding = DummyEmbedding(configs)
-        #self.encoder_prenet = DummyPrenet(configs)
-
         self.encoder = Encoder(configs)
         self.decoder = Decoder(configs)
 
-    def forward(self, input_tensor, mel_input):
-        '''print("before embedding : ", input_tensor.shape)
-        tensor = self.embedding(input_tensor)
-        print("before encoder : ", tensor.shape)
-        tensor = self.encoder_prenet(tensor)'''
-
-        tensor, c_mask, attn_enc = self.encoder.forward(input_tensor.cuda())
-        #log.debug("before decoder : ", tensor.shape)
-        return self.decoder.forward(tensor, tensor, c_mask, mel_input.cuda())
-
-
-'''if __name__ == '__main__':
-    DummyModel()
-    DummyAttention()
-    DummyEmbedding()'''
+    def forward(self, text_tensor, mel_tensor):
+        text_attention_emb = pos_emb(text_tensor.cuda())
+        output_tensor = self.encoder.forward(text_tensor.cuda(), text_attention_emb)
+        return self.decoder.forward(text_tensor.cuda(), text_attention_emb, output_tensor,
+                                    mel_tensor.cuda())

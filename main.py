@@ -6,7 +6,7 @@ from settings import configs
 from utils import dataset
 from utils import util
 from utils.dataset import prepare_data_loaders, get_data_loaders, PHONEME_DICT
-from model import DummyModel as Model
+from model import Model as Model
 import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
@@ -46,9 +46,7 @@ def train(args):
             step += 1
             path_list, mel_batch, encoded_batch, text_list, mel_length_list, encoded_length_list = data
 
-            mel_out, attn_dot_list, stop_tokens, attn_dec_list = model(torch.tensor(encoded_batch),
-                                                                       torch.tensor(mel_batch))
-
+            mel_out, stop_tokens = model(torch.tensor(encoded_batch), torch.tensor(mel_batch))
             loss = nn.L1Loss()(mel_out.cuda(), mel_batch.cuda())
             loss_list.append(loss.item())
             if step % LOGGING_STEPS == 0:

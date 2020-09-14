@@ -79,6 +79,7 @@ config_dict.update({
 config_dict.update({
     "num_hidden": 256,
     "multihead_num": 4,
+    "mode": 'train',
 })
 
 print('Configuration Dictionary List')
