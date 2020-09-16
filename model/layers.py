@@ -19,14 +19,15 @@ fileHandler.setFormatter(formatter)
 log.addHandler(fileHandler)
 
 
-def t_embedding(embedding_size, num_hidden):
+def t_embedding(max_length, num_hidden):
     emb = np.array([[pos_i / np.power(10000, 2 * (hid_idx // 2) / num_hidden)
                      for hid_idx in range(num_hidden)]
-                    for pos_i in range(embedding_size)])
+                    for pos_i in range(max_length)])
 
     emb[:, 0::2] = np.sin(emb[:, 0::2])
     emb[:, 1::2] = np.cos(emb[:, 1::2])
-    return torch.from_numpy(emb).type(torch.FloatTensor)
+    # return torch.from_numpy(emb).type(torch.FloatTensor)
+    return torch.from_numpy(emb).type(torch.FloatTensor).requires_grad_(False)
 
 
 def pos_emb(text_tensor):
@@ -176,12 +177,19 @@ class Attention(torch.nn.Module):
 
     def forward(self, key_value_tensor, query_tensor, text_embedding=None, query_embedding=None):
         key, value, query = key_value_tensor, key_value_tensor, query_tensor
-        if text_embedding is not None:
-            text_embedding = text_embedding.transpose(0, 1)
-        output_tensor, _ = self.multihead(query, key, value,
-                                          key_padding_mask=text_embedding)
+        # if text_embedding is not None:
+        #     text_embedding = text_embedding.transpose(0, 1)
+
+        # print(f' query: {query.shape} | key: {key.shape} | value: {value.shape} | text_embedding: {text_embedding.shape}')
+        # query: torch.Size([4, 57, 256]) | key: torch.Size([4, 57, 256]) | value: torch.Size([4, 57, 256]) | text_embedding: torch.Size([4, 57])
+
+        output_tensor, _ = self.multihead(query, key, value, key_padding_mask=text_embedding)
         output_tensor = output_tensor + query_tensor
-        output_tensor = self.normalization(output_tensor)
+
+        output_tensor = output_tensor.transpose(0, 1)
+
+        output_tensor = self.normalization(output_tensor) # ('B', L, H)
+        
         return output_tensor
 
 
@@ -190,21 +198,33 @@ class Encoder(torch.nn.Module):
         super(Encoder, self).__init__()
         self.configs = configs
         self.encoder_prenet = EncoderPrenet(configs)
-        self.position_embedding = torch.nn.Embedding.from_pretrained(t_embedding(configs['embedding_dim'],
-                                                                                 configs['num_hidden']))
-        self.attention = torch.nn.ModuleList([Attention(configs)
-                                              for _ in range(3)])
-        self.ffn = torch.nn.ModuleList([FFN(configs)
-                                        for i in range(3)])
+        # self.position_embedding = torch.nn.Embedding.from_pretrained(t_embedding(configs['embedding_dim'],
+        #                                                                          configs['num_hidden']))
 
-    def forward(self, text_tensor, text_attention_emb):
+        self.position_embedding = t_embedding(128, configs['num_hidden']).cuda()
+
+        self.attention = torch.nn.ModuleList([Attention(configs) for _ in range(3)])
+        self.ffn = torch.nn.ModuleList([FFN(configs) for i in range(3)])
+
+    def forward(self, text_tensor, text_attention_emb=None):
         tensor = self.encoder_prenet(text_tensor)
-        position_embedding = torch.nn.Embedding.from_pretrained(t_embedding(text_tensor.shape[1],
-                                                                            self.configs['num_hidden'])).cuda()
-        text_emb = position_embedding(text_tensor)
-        tensor = tensor + text_emb
+        # position_embedding = torch.nn.Embedding.from_pretrained(t_embedding(text_tensor.shape[1], self.configs['num_hidden'])).cuda()
+        # text_emb = position_embedding(text_tensor)
+
+        # print(tensor.shape)                  # torch.Size([4, 46, 256])
+        # print(self.position_embedding.shape) # torch.Size([512, 256])
+        # tensor = tensor + text_emb[:tensor.shape[1], :]
+        B, L, _ = tensor.shape
+
+        # print(self.position_embedding[:L, :].repeat(B, 1, 1).shape)         # torch.Size([4, 57, 256])
+        # print(self.position_embedding[:L, :].repeat(B, 1, 1).requires_grad) # False
+
+        tensor = tensor + self.position_embedding[:L, :].repeat(B, 1, 1)
+
         for attention_layer, ffn_layer in zip(self.attention, self.ffn):
-            tensor = attention_layer(tensor, tensor, text_embedding=text_attention_emb)
+            # tensor = attention_layer(tensor, tensor, text_embedding=text_attention_emb)
+            tensor = tensor.transpose(0, 1) # (B, L, H) -> (L, B, H)
+            tensor = attention_layer(tensor, tensor)
             tensor = ffn_layer(tensor)
         return tensor
 
@@ -222,8 +242,15 @@ class Decoder(torch.nn.Module):
         self.mel_linear = Linear(self.num_hidden, self.num_mels)
         self.stop_linear = Linear(self.num_hidden, 1)
 
+        self.position_embedding = t_embedding(1024, configs['num_hidden']).cuda()
+
     def forward(self, text_tensor, text_attention_emb, input_tensor, mel_tensor):
         output_tensor = self.decoder_prenet(mel_tensor.type(torch.cuda.FloatTensor))
+
+        # print(output_tensor.shape) # torch.Size([4, 464, 256])
+
+        B, L, _ = output_tensor.shape
+        output_tensor = output_tensor + self.position_embedding[:L, :].repeat(B, 1, 1)
 
         '''position_embedding = torch.nn.Embedding.from_pretrained(t_embedding(mel_tensor.shape[1],
                                                                             self.configs['num_hidden'])).cuda()
@@ -231,12 +258,17 @@ class Decoder(torch.nn.Module):
         text_emb = position_embedding(mel_tensor[:, :].type(torch.LongTensor).cuda())
         print(mel_tensor.shape, output_tensor.shape, text_emb.shape)
         output_tensor = text_emb + output_tensor'''
-        input_tensor = input_tensor.transpose(0, 1)
+        # input_tensor = input_tensor.transpose(0, 1)
+        text_tensor = text_tensor.transpose(0, 1)
         output_tensor = output_tensor.transpose(0, 1)
         masked_tensor = self.attention(output_tensor, output_tensor)
-        output_tensor = self.attention(input_tensor, masked_tensor, text_embedding=None)
+        masked_tensor = masked_tensor.transpose(0, 1)
+        # output_tensor = self.attention(input_tensor, masked_tensor, text_embedding=None)
+        output_tensor = self.attention(text_tensor, masked_tensor, text_embedding=None)
+
         output_tensor = self.ffn(output_tensor)
-        output_tensor = output_tensor.transpose(0, 1)
+        # output_tensor = output_tensor.transpose(0, 1)
+        # print(output_tensor.shape) # torch.Size([4, 405, 256])
         mel_out = self.mel_linear(output_tensor)
 
         stop_tokens = self.stop_linear(output_tensor)
@@ -252,7 +284,9 @@ class Model(torch.nn.Module):
         self.decoder = Decoder(configs)
 
     def forward(self, text_tensor, mel_tensor):
-        text_attention_emb = pos_emb(text_tensor.cuda())
-        output_tensor = self.encoder.forward(text_tensor.cuda(), text_attention_emb)
-        return self.decoder.forward(text_tensor.cuda(), text_attention_emb, output_tensor,
-                                    mel_tensor.cuda())
+        # text_attention_emb = pos_emb(text_tensor.cuda())
+        # output_tensor = self.encoder.forward(text_tensor.cuda(), text_attention_emb)
+        output_tensor = self.encoder.forward(text_tensor.cuda())
+        # return self.decoder.forward(text_tensor.cuda(), text_attention_emb, output_tensor,
+        #                             mel_tensor.cuda())
+        return self.decoder.forward(output_tensor.cuda(), None, None, mel_tensor.cuda())

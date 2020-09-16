@@ -65,7 +65,8 @@ def train(args):
             step += 1
             path_list, mel_batch, encoded_batch, text_list, mel_length_list, encoded_length_list = data
 
-            mel_out, stop_tokens = model(torch.tensor(encoded_batch), torch.tensor(mel_batch))
+            # mel_out, stop_tokens = model(torch.tensor(encoded_batch), torch.tensor(mel_batch))
+            mel_out, stop_tokens = model(encoded_batch, mel_batch)
             loss = nn.L1Loss()(mel_out.cuda(), mel_batch.cuda())
             loss_list.append(loss.item())
             if step % LOGGING_STEPS == 0:

@@ -59,7 +59,7 @@ config_dict.update({
 })
 
 config_dict.update({
-    "batch_size": 24,
+    "batch_size": 4,
 })
 
 config_dict.update({
