@@ -123,6 +123,23 @@ def train(args):
         image = matrix_to_plt_image(mel_out[0].cpu().detach().numpy().T, text_list[0])
         writer.add_image('mel_out_valid', image, step, dataformats="HWC")  # (1, 80, T)
 
+        loss_list_test = list()
+        for i, data in tqdm(enumerate(valid_data_loader), total=int(len(valid_data_loader.dataset) / valid_data_loader.batch_size)):
+            path_list, mel_batch, encoded_batch, text_list, mel_length_list, encoded_length_list = data
+            zero_batch = torch.zeros_like(mel_batch)
+            mel_out, stop_tokens = model(encoded_batch, zero_batch)
+            loss = nn.L1Loss()(mel_out.cuda(), mel_batch.cuda())
+            loss_list_test.append(loss.item())
+
+        writer.add_scalar('loss_infer', np.mean(loss_list), step)
+        writer.add_text('script_infer', text_list[0], step)
+
+        image = matrix_to_plt_image(mel_batch[0].cpu().detach().numpy().T, text_list[0])
+        writer.add_image('mel_in_infer', image, step, dataformats="HWC")  # (1, 80, T)
+
+        image = matrix_to_plt_image(mel_out[0].cpu().detach().numpy().T, text_list[0])
+        writer.add_image('mel_out_infer', image, step, dataformats="HWC")  # (1, 80, T)
+
         # break
 
     # torch.save(model, PATH)

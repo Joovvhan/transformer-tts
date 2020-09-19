@@ -64,7 +64,7 @@ class Linear(torch.nn.Module):
 class Conv(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=1, weight_init='linear'):
         super(Conv, self).__init__()
-        self.conv = torch.Conv1d(in_channels, out_channels,
+        self.conv = Conv1d(in_channels, out_channels,
                                  kernel_size=kernel_size)
         torch.nn.init.xavier_uniform_(self.conv.weight, gain=torch.nn.init.calculate_gain(weight_init))
 
@@ -132,6 +132,31 @@ class DecoderPrenet(torch.nn.Module):
         for layer in self.layers:
             tensor = layer(tensor)
         log.info("Decoder prenet ")
+        return tensor
+
+
+class DecoderPostnet(torch.nn.Module):
+    def __init__(self, configs):
+        super(DecoderPostnet, self).__init__()
+        self.configs = configs
+        self.num_mels = self.configs['n_mel_channels']
+        self.layers = ModuleList([
+            Conv1d(self.num_mels, self.num_mels, kernel_size=3, padding=1),
+            Conv1d(self.num_mels, self.num_mels, kernel_size=3, padding=1),
+            Conv1d(self.num_mels, self.num_mels, kernel_size=3, padding=1),
+            Conv1d(self.num_mels, self.num_mels, kernel_size=3, padding=1),
+            Conv1d(self.num_mels, self.num_mels, kernel_size=3, padding=1),
+        ])
+
+        # (N, C_in, L) -> (N, C_out, L)
+
+    def forward(self, input_tensor):
+        tensor = input_tensor
+        tensor = tensor.transpose(1, 2) # (N, C_out, L)
+        for layer in self.layers:
+            tensor = layer(tensor)
+        tensor = tensor.transpose(1, 2) # (N, L, c)
+        tensor = tensor + input_tensor
         return tensor
 
 
@@ -264,6 +289,7 @@ class Decoder(torch.nn.Module):
         self.num_hidden = configs['num_hidden']
         self.num_mels = configs['n_mel_channels']
         self.mel_linear = Linear(self.num_hidden, self.num_mels)
+        self.decodr_postnet = DecoderPostnet(configs)
         self.stop_linear = Linear(self.num_hidden, 1)
 
         self.position_embedding = t_embedding(1024, configs['num_hidden']).cuda()
@@ -296,6 +322,8 @@ class Decoder(torch.nn.Module):
             # output_tensor = output_tensor.transpose(0, 1)
             # print(output_tensor.shape) # torch.Size([4, 405, 256])
         mel_out = self.mel_linear(output_tensor)
+
+        mel_out = mel_out + self.decodr_postnet(mel_out)
 
         stop_tokens = self.stop_linear(output_tensor)
 
