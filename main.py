@@ -81,12 +81,12 @@ def train(args):
 
                     for j in range(4):
                         x = torchvision.utils.make_grid(prob[j*4] * 255)
-                        writer.add_image('ENC_Attention_%d_0' % step, x, i * 4 + j)
+                        writer.add_image('ENC_Attention_%d_0' % step, x, step)
                 print(dec_attention[0].shape)
                 for i, prob in enumerate(dec_attention):
                     for j in range(4):
                         x = torchvision.utils.make_grid(prob[j * 4] * 255)
-                        writer.add_image('DEC_Attention_%d_0' % step, x, i * 4 + j)
+                        writer.add_image('DEC_Attention_%d_0' % step, x, step)
 
                 image = matrix_to_plt_image(mel_batch[0].cpu().detach().numpy().T, text_list[0])
                 writer.add_image('mel_in', image, step, dataformats="HWC")  # (1, 80, T)
