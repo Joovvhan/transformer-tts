@@ -192,8 +192,6 @@ class FFN(torch.nn.Module):
 
 
 class Attention(torch.nn.Module):
-
-
     def __init__(self, configs):
         super(Attention, self).__init__()
         self.configs = configs
@@ -223,20 +221,21 @@ class Attention(torch.nn.Module):
 
         # print(f' query: {query.shape} | key: {key.shape} | value: {value.shape} | text_embedding: {text_embedding.shape}')
 
-        output_tensor, _ = self.multihead(query, key, value, key_padding_mask=text_embedding)
+        output_tensor, attention = self.multihead(query, key, value, key_padding_mask=text_embedding)
         output_tensor = output_tensor + query_tensor
 
         output_tensor = output_tensor.transpose(0, 1)     # (L, N, E) -> (N, L, E)
 
         output_tensor = self.normalization(output_tensor) # ('B', L, H)
         
-        return output_tensor
+        return output_tensor, attention
 
 
 class Encoder(torch.nn.Module):
     def __init__(self, configs):
         super(Encoder, self).__init__()
         self.configs = configs
+        self.alpha = nn.Parameter(torch.ones(1))
         self.encoder_prenet = EncoderPrenet(configs)
         # self.position_embedding = torch.nn.Embedding.from_pretrained(t_embedding(configs['embedding_dim'],
         #                                                                          configs['num_hidden']))
@@ -262,23 +261,24 @@ class Encoder(torch.nn.Module):
         # print(f"{'Encoder Input':20} | {tensor.shape}") # torch.Size([4, 42, 256]
         # print(f"{'Positional Embedding':20} | {self.position_embedding[:L, :].repeat(B, 1, 1).shape}")
         # torch.Size([4, 42, 256]
-        tensor = tensor + self.position_embedding[:L, :].repeat(B, 1, 1)
+        tensor = tensor + self.alpha * self.position_embedding[:L, :].repeat(B, 1, 1)
 
         # print(f"{'Encoder Input':20} | {tensor.shape}") # torch.Size([4, 42, 256]
-
+        attention_list = list()
         for attention_layer, ffn_layer in zip(self.attention, self.ffn):
             # tensor = attention_layer(tensor, tensor, text_embedding=text_attention_emb)
             tensor = tensor.transpose(0, 1) # (B, L, H) -> (L, B, H)
-            tensor = attention_layer(tensor, tensor) # (B, L, H)
+            tensor, attention = attention_layer(tensor, tensor) # (B, L, H)
+            attention_list.append(attention)
             tensor = ffn_layer(tensor) # (B, L, H)
-        return tensor # (B, L, H)
+        return tensor, attention_list # (B, L, H)
 
 
 class Decoder(torch.nn.Module):
     def __init__(self, configs):
         super(Decoder, self).__init__()
         self.configs = configs
-        self.alpha = torch.nn.Parameter(torch.ones(1)).cuda()
+        self.alpha = torch.nn.Parameter(torch.ones(1))
         self.decoder_prenet = DecoderPrenet(configs)
         # self.attention = Attention(configs)
         # self.ffn = FFN(configs)
@@ -299,7 +299,7 @@ class Decoder(torch.nn.Module):
         # print(output_tensor.shape) # torch.Size([4, 464, 256])
 
         B, L, _ = output_tensor.shape
-        output_tensor = output_tensor + self.position_embedding[:L, :].repeat(B, 1, 1)
+        output_tensor = output_tensor + self.position_embedding[:L, :].repeat(B, 1, 1) * self.alpha
 
         '''position_embedding = torch.nn.Embedding.from_pretrained(t_embedding(mel_tensor.shape[1],
                                                                             self.configs['num_hidden'])).cuda()
@@ -309,25 +309,25 @@ class Decoder(torch.nn.Module):
         output_tensor = text_emb + output_tensor'''
         # input_tensor = input_tensor.transpose(0, 1)
         text_tensor = text_tensor.transpose(0, 1) # (B, L, H) -> (L, B, H)
-
+        attention_list = list()
         for attention_layer_1, attention_layer_2, ffn_layer in zip(self.attention_1, self.attention_2, self.ffn):
 
             output_tensor = output_tensor.transpose(0, 1) # (B, T, 80) -> (T, B, 80)
-            masked_tensor = attention_layer_1(output_tensor, output_tensor) # (B, T, 80)
+            masked_tensor, attention_1 = attention_layer_1(output_tensor, output_tensor) # (B, T, 80)
             masked_tensor = masked_tensor.transpose(0, 1) # (B, T, 80) -> # (T, B, 80)
             # output_tensor = self.attention(input_tensor, masked_tensor, text_embedding=None)
-            output_tensor = attention_layer_2(text_tensor, masked_tensor, text_embedding=None) # (B, T, 80)
-
+            output_tensor, attention_2 = attention_layer_2(text_tensor, masked_tensor, text_embedding=None) # (B, T, 80)
+            attention_list.append(attention_2)
             output_tensor = ffn_layer(output_tensor) # (B, L, H)
             # output_tensor = output_tensor.transpose(0, 1)
             # print(output_tensor.shape) # torch.Size([4, 405, 256])
         mel_out = self.mel_linear(output_tensor)
 
-        mel_out = mel_out + self.decodr_postnet(mel_out)
+        mel_out = mel_out + self.alpha * self.decodr_postnet(mel_out)
 
         stop_tokens = self.stop_linear(output_tensor)
 
-        return mel_out, stop_tokens
+        return mel_out, stop_tokens, attention_list
 
 
 class Model(torch.nn.Module):
@@ -344,10 +344,12 @@ class Model(torch.nn.Module):
 
         # text_attention_emb = pos_emb(text_tensor.cuda())
         # output_tensor = self.encoder.forward(text_tensor.cuda(), text_attention_emb)
-        output_tensor = self.encoder.forward(text_tensor.cuda())
+        output_tensor, enc_attention = self.encoder.forward(text_tensor.cuda())
 
         # print(f"{'Encoder Output':20} | {output_tensor.shape}") # torch.Size([4, 42, 256]
 
         # return self.decoder.forward(text_tensor.cuda(), text_attention_emb, output_tensor,
         #                             mel_tensor.cuda())
-        return self.decoder.forward(output_tensor.cuda(), None, None, mel_tensor.cuda())
+        mel_out, stop_tokens, dec_attention = self.decoder.forward(output_tensor.cuda(),
+                                                                   None, None, mel_tensor.cuda())
+        return mel_out, stop_tokens, enc_attention, dec_attention

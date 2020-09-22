@@ -10,7 +10,7 @@ from model import Model as Model
 import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
-
+import torchvision
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.rcParams['axes.unicode_minus'] = False
@@ -32,7 +32,7 @@ LOGGING_STEPS = 40
 
 def matrix_to_plt_image(data_matrix, text):
     fig, ax = plt.subplots()
-    im = ax.imshow(data_matrix, origin="reversed", aspect="auto")
+    im = ax.imshow(data_matrix) #, origin="reversed", aspect="auto")
     im.set_clim(-6, 0)
     plt.colorbar(im, ax=ax)
     plt.xlabel(jamo2text(text))
@@ -50,6 +50,7 @@ def train(args):
     step = 0
     loss_list = list()
 
+    plt.rc('font', family='Malgun Gothic')
     model = Model(configs).cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-5)
     if args.load != '':
@@ -66,7 +67,7 @@ def train(args):
             path_list, mel_batch, encoded_batch, text_list, mel_length_list, encoded_length_list = data
 
             # mel_out, stop_tokens = model(torch.tensor(encoded_batch), torch.tensor(mel_batch))
-            mel_out, stop_tokens = model(encoded_batch, mel_batch)
+            mel_out, stop_tokens, enc_attention, dec_attention = model(encoded_batch, mel_batch)
             loss = nn.L1Loss()(mel_out.cuda(), mel_batch.cuda())
             loss_list.append(loss.item())
             if step % LOGGING_STEPS == 0:
@@ -74,6 +75,18 @@ def train(args):
                 writer.add_text('script', text_list[0], step)
                 # writer.add_image('mel_in', torch.transpose(mel_batch[:1], 1, 2), step)  # (1, 80, T)
                 # writer.add_image('mel_out', torch.transpose(mel_out[:1], 1, 2), step)  # (1, 80, T)
+                #attention_image = matrix_to_plt_image(enc_attention[0].cpu().detach().numpy().T, text_list[0])
+                #writer.add_image('attention', attention_image, step, dataformats="HWC")
+                for i, prob in enumerate(enc_attention):
+
+                    for j in range(4):
+                        x = torchvision.utils.make_grid(prob[j*4] * 255)
+                        writer.add_image('ENC_Attention_%d_0' % step, x, i * 4 + j)
+                print(dec_attention[0].shape)
+                for i, prob in enumerate(dec_attention):
+                    for j in range(4):
+                        x = torchvision.utils.make_grid(prob[j * 4] * 255)
+                        writer.add_image('DEC_Attention_%d_0' % step, x, i * 4 + j)
 
                 image = matrix_to_plt_image(mel_batch[0].cpu().detach().numpy().T, text_list[0])
                 writer.add_image('mel_in', image, step, dataformats="HWC")  # (1, 80, T)
